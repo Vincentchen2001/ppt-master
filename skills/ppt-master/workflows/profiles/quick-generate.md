@@ -705,7 +705,11 @@ nor establishes a defect. When the summary contradicts an active decision, read
 only the affected `files[].info.carrier_receipt` rows from the current report,
 repair those pages in one consolidated pass, and rerun the same final checker.
 
-Then export:
+Then finalize. The command reuses the matching final JSON report, captures the
+export and postflight output, writes a resumable checkpoint, and registers the
+current PPTX in `deliverables/manifest.json`. If visual or motion work changed
+`svg_output/` after the checker, it refreshes the stale quality report once
+before export.
 
 When Speaker Notes is enabled, load
 [`executor-notes.md`](../../references/executor-notes.md) after the passing final
@@ -745,11 +749,11 @@ Choose exactly one notes mode for the base export:
 
 ```bash
 # Speaker Notes enabled
-python3 ${SKILL_DIR}/scripts/svg_to_pptx.py <project_path> \
+python3 ${SKILL_DIR}/scripts/project_manager.py finalize <project_path> \
   --quick-generate --with-notes
 
 # Speaker Notes disabled
-python3 ${SKILL_DIR}/scripts/svg_to_pptx.py <project_path> \
+python3 ${SKILL_DIR}/scripts/project_manager.py finalize <project_path> \
   --quick-generate --no-notes
 ```
 
@@ -764,13 +768,14 @@ it owns page audio/SRT, narrated PPTX, the optional raw native MP4, and the
 final mixed or captured MP4. When a selected manual capture has not yet been
 returned, it owns the capture-ready narrated PPTX handoff instead.
 
-The exporter requires a passing `final` report whose SVG fingerprint matches
+Finalize requires a passing `final` report whose SVG fingerprint matches
 the current `svg_output/`; missing, blocking, non-final, or stale reports stop
-before PPTX creation. The default output path retains ordinary backup and
-postflight behavior. An explicit `-o <path>.pptx` keeps the ordinary no-backup
-behavior. On failure, repair the owning SVG, resource, or optional capability
-input, rerun the final checker, then export again; do not create a Design Spec
-or lock.
+before PPTX creation. It persists `validation/finalize_state.json`,
+`validation/finalize_result.json`, and the unfiltered child output in
+`validation/finalize_last.log`. On failure, repair the owning SVG, resource, or
+optional capability input and rerun the same finalize command; a current
+passing quality report and successful postflight output are reused. Append
+advanced exporter arguments after `--`, for example `-- -o <path>.pptx`.
 
 ```markdown
 ## ✅ Quick Generate Complete

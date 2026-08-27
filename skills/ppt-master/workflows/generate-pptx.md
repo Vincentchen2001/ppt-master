@@ -820,14 +820,16 @@ python3 ${SKILL_DIR}/scripts/finalize_svg.py <project_path>
 
 #### Step 7.3 — Export the Native PPTX
 
-Choose exactly one notes mode:
+Choose exactly one notes mode. Finalize reuses the matching final quality
+report, runs native export and postflight, persists its recovery checkpoint,
+and registers the current PPTX in `deliverables/manifest.json`:
 
 | Effective decision | Command |
 |---|---|
-| Speaker Notes `enabled` | `python3 ${SKILL_DIR}/scripts/svg_to_pptx.py <project_path>` |
-| Speaker Notes `disabled` | `python3 ${SKILL_DIR}/scripts/svg_to_pptx.py <project_path> --no-notes` |
+| Speaker Notes `enabled` | `python3 ${SKILL_DIR}/scripts/project_manager.py finalize <project_path> --with-notes` |
+| Speaker Notes `disabled` | `python3 ${SKILL_DIR}/scripts/project_manager.py finalize <project_path> --no-notes` |
 
-For deck-wide motion settings, append the resolved flags from
+For deck-wide motion settings, append `--` and then the resolved exporter flags from
 [`animations.md`](../references/animations.md). When the conditional custom
 stage preserves or produces `<project_path>/animations.json`, keep the base command above:
 the exporter reads the sidecar automatically. Explicit motion flags override
@@ -837,6 +839,12 @@ Animations disable keeps the sidecar and appends `-a none`; final Stage-2 `false
 does neither. Only explicit all-motion disable uses `--no-animations`.
 Otherwise do not mix deck-wide flags with a sidecar. With no motion input or
 sidecar, preserve `fade` / `none`.
+
+On failure, read the concise phase from the command and the detailed retained
+output from `validation/finalize_last.log`, repair the owning input, and rerun
+the same command. A matching successful quality report or postflight output is
+reused; `--force` is required to intentionally create another unchanged base
+export.
 
 After the transition/object-motion solution above is final, perform the
 optional sound pass in [`animations.md`](../references/animations.md) §2.2.

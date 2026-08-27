@@ -32,6 +32,7 @@ import io
 import json
 import math
 import os
+import subprocess
 import sys
 import time
 import urllib.error
@@ -302,6 +303,54 @@ def check_server(server_url: str, project_path: Path) -> None:
         )
 
 
+def start_project_server(project_path: Path) -> str:
+    """Start this project's preview server and return its verified URL."""
+    server_script = Path(__file__).resolve().parent / 'svg_editor' / 'server.py'
+    command = [
+        sys.executable,
+        str(server_script),
+        str(project_path),
+        '--daemon',
+        '--no-browser',
+        '--timeout',
+        '300',
+    ]
+    result = subprocess.run(
+        command,
+        cwd=project_path,
+        capture_output=True,
+        text=True,
+        encoding='utf-8',
+        errors='replace',
+        check=False,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or 'preview startup failed').strip()
+        raise RuntimeError(detail)
+    try:
+        server_url = discover_server_url(project_path)
+        check_server(server_url, project_path)
+    except Exception:
+        stop_project_server(project_path)
+        raise
+    return server_url
+
+
+def stop_project_server(project_path: Path) -> bool:
+    """Stop a preview server owned by this visual-review invocation."""
+    server_script = Path(__file__).resolve().parent / 'svg_editor' / 'server.py'
+    result = subprocess.run(
+        [sys.executable, str(server_script), str(project_path), '--shutdown'],
+        cwd=project_path,
+        capture_output=True,
+        text=True,
+        encoding='utf-8',
+        errors='replace',
+        check=False,
+    )
+    return result.returncode == 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description='Render project SVGs to PNGs for visual review.',
@@ -314,7 +363,11 @@ def main() -> int:
     )
     parser.add_argument(
         '--server-url', default=None,
-        help='Explicit live-preview URL (default: discover it from the project lock)',
+        help='Explicit live-preview URL (default: reuse or auto-start the project server)',
+    )
+    parser.add_argument(
+        '--keep-server', action='store_true',
+        help='Keep a server auto-started by this command running after rendering',
     )
     parser.add_argument(
         '--lock-timeout', type=float, default=30.0,
@@ -338,35 +391,55 @@ def main() -> int:
         )
         return 3
 
-    try:
-        server_url = args.server_url or discover_server_url(project_path)
-        check_server(server_url, project_path)
-    except RuntimeError as e:
-        _safe_print(str(e))
-        _safe_print(
-            'start it with:\n'
-            f'    python3 skills/ppt-master/scripts/svg_editor/server.py {project_path}'
-        )
-        return 2
-
-    try:
-        pages = discover_pages(project_path, args.pages)
-    except (FileNotFoundError, ValueError) as e:
-        _safe_print(str(e))
-        return 2
-
-    preview_dir = project_path / '.preview'
-    lock_path = preview_dir / '.render.lock'
-
-    with file_lock(lock_path, timeout=args.lock_timeout):
+    server_owned = False
+    server_stopped = False
+    server_origin = 'explicit' if args.server_url else 'existing'
+    if args.server_url:
         try:
-            records = render_pages(server_url, pages, preview_dir)
-        except Exception as e:  # noqa: BLE001 — browser launch failure
-            _safe_print(f'browser session failed: {type(e).__name__}: {e}')
-            _safe_print(
-                'try:  python3 -m playwright install chromium'
-            )
-            return 3
+            server_url = args.server_url
+            check_server(server_url, project_path)
+        except RuntimeError as e:
+            _safe_print(str(e))
+            return 2
+    else:
+        try:
+            server_url = discover_server_url(project_path)
+            check_server(server_url, project_path)
+        except RuntimeError:
+            try:
+                server_url = start_project_server(project_path)
+            except RuntimeError as e:
+                _safe_print(f'could not auto-start project live preview: {e}')
+                return 2
+            server_owned = True
+            server_origin = 'auto-started'
+
+    records: list[dict] | None = None
+    render_error: tuple[int, str] | None = None
+    try:
+        try:
+            pages = discover_pages(project_path, args.pages)
+        except (FileNotFoundError, ValueError) as e:
+            render_error = (2, str(e))
+        if render_error is None:
+            preview_dir = project_path / '.preview'
+            lock_path = preview_dir / '.render.lock'
+            try:
+                with file_lock(lock_path, timeout=args.lock_timeout):
+                    records = render_pages(server_url, pages, preview_dir)
+            except Exception as e:  # noqa: BLE001 — browser launch failure
+                render_error = (
+                    3,
+                    f'browser session failed: {type(e).__name__}: {e}',
+                )
+    finally:
+        if server_owned and not args.keep_server:
+            server_stopped = stop_project_server(project_path)
+
+    if render_error is not None:
+        _safe_print(render_error[1])
+        return render_error[0]
+    assert records is not None
 
     for rec in records:
         if not rec['ok']:
@@ -377,6 +450,11 @@ def main() -> int:
     summary = {
         'project': str(project_path),
         'server_url': server_url,
+        'preview_server': {
+            'origin': server_origin,
+            'owned': server_owned,
+            'stopped': server_stopped,
+        },
         'rendered': sum(1 for r in records if r['ok']),
         'failed': sum(1 for r in records if not r['ok']),
         'all_background': sum(1 for r in records if r.get('all_background')),

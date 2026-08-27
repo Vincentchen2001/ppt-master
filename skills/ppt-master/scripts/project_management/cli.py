@@ -22,7 +22,9 @@ Dependencies:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import filecmp
+import io
 import json
 import os
 import re
@@ -40,6 +42,8 @@ from .page_context import (
     record_page_context_usage,
     render_page_context,
 )
+from .deliverables import register_deliverable
+from .finalize import finalize_project
 from .paths import (
     SCRIPTS_DIR,
     SOURCE_TO_MD_DIR,
@@ -1132,6 +1136,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     import_sources.add_argument("project_path", help="Project directory")
     import_sources.add_argument("sources", nargs="+", help="Source files, directories, or URLs")
+    import_sources.add_argument(
+        "--json",
+        action="store_true",
+        help="Print one machine-readable result object on stdout",
+    )
     mode = import_sources.add_mutually_exclusive_group()
     mode.add_argument(
         "--move",
@@ -1157,6 +1166,57 @@ def build_parser() -> argparse.ArgumentParser:
 
     info = subparsers.add_parser("info", help="Print project metadata")
     info.add_argument("project_path", help="Project directory")
+
+    register = subparsers.add_parser(
+        "register-deliverable",
+        help="Register project files for host delivery",
+    )
+    register.add_argument("project_path", help="Project directory")
+    register.add_argument(
+        "files",
+        nargs="+",
+        help="Project-relative or project-contained absolute file paths",
+    )
+    register.add_argument(
+        "--role",
+        choices=("primary", "supplementary", "supporting"),
+        default="supplementary",
+    )
+    register.add_argument("--required", action="store_true")
+    register.add_argument("--json", action="store_true")
+
+    finalize = subparsers.add_parser(
+        "finalize",
+        help="Run or resume the final quality gate, export, and delivery manifest",
+    )
+    finalize.add_argument("project_path", help="Project directory")
+    finalize.add_argument("--quick-generate", action="store_true")
+    finalize.add_argument(
+        "--deliverable",
+        action="append",
+        default=[],
+        help="Additional project-relative file to register after export",
+    )
+    notes_mode = finalize.add_mutually_exclusive_group()
+    notes_mode.add_argument("--with-notes", action="store_true")
+    notes_mode.add_argument("--no-notes", action="store_true")
+    finalize.add_argument("--native-charts-and-tables", action="store_true")
+    finalize.add_argument(
+        "--pptx-structure",
+        choices=("flat", "structured", "preserve"),
+        default=None,
+    )
+    finalize.add_argument(
+        "--recorded-narration",
+        metavar="AUDIO_DIR",
+        default=None,
+    )
+    finalize.add_argument(
+        "--force",
+        action="store_true",
+        help="Create a new export even when the completed current result is reusable",
+    )
+    finalize.add_argument("--json", action="store_true")
 
     page_context = subparsers.add_parser(
         "page-context",
@@ -1192,7 +1252,13 @@ def main(argv: list[str] | None = None) -> int:
     """Run the CLI entry point."""
     require_skill_integrity()
     parser = build_parser()
-    args = parser.parse_args(argv)
+    raw_argv = list(argv) if argv is not None else sys.argv[1:]
+    export_passthrough: list[str] = []
+    if raw_argv and raw_argv[0] == "finalize" and "--" in raw_argv:
+        separator = raw_argv.index("--")
+        export_passthrough = raw_argv[separator + 1:]
+        raw_argv = raw_argv[:separator]
+    args = parser.parse_args(raw_argv)
     manager = ProjectManager()
 
     try:
@@ -1228,13 +1294,31 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "import-sources":
-            summary = manager.import_sources(
-                args.project_path,
-                args.sources,
-                move=args.move,
-                copy=args.copy,
-            )
+            if args.json:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    summary = manager.import_sources(
+                        args.project_path,
+                        args.sources,
+                        move=args.move,
+                        copy=args.copy,
+                    )
+            else:
+                summary = manager.import_sources(
+                    args.project_path,
+                    args.sources,
+                    move=args.move,
+                    copy=args.copy,
+                )
             import_complete = _import_completed(summary)
+            if args.json:
+                payload = {
+                    "schema": "ppt-master.import-sources-result.v1",
+                    "status": "completed" if import_complete else "failed",
+                    "project": str(Path(args.project_path).expanduser().resolve()),
+                    "summary": summary,
+                }
+                print(json.dumps(payload, ensure_ascii=False, indent=2))
+                return 0 if import_complete else 1
             if import_complete:
                 print(f"[OK] Imported sources into: {args.project_path}")
             elif _has_usable_import(summary):
@@ -1337,6 +1421,76 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Created: {info['create_date']}")
             return 0
 
+        if args.command == "register-deliverable":
+            if args.role == "primary" and len(args.files) != 1:
+                raise ValueError("Primary registration accepts exactly one file")
+            entries: list[dict[str, object]] = []
+            manifest_path: Path | None = None
+            for file_path in args.files:
+                entry, manifest_path = register_deliverable(
+                    args.project_path,
+                    file_path,
+                    role=args.role,
+                    required=args.required,
+                    source="project-manager",
+                    supersede_role=args.role == "primary",
+                )
+                entries.append(entry)
+            payload = {
+                "schema": "ppt-master.register-deliverable-result.v1",
+                "status": "completed",
+                "manifest": "deliverables/manifest.json",
+                "items": entries,
+            }
+            if args.json:
+                print(json.dumps(payload, ensure_ascii=False, indent=2))
+            else:
+                print(f"[OK] Registered {len(entries)} deliverable(s)")
+                for entry in entries:
+                    print(f"  - {entry['path']} ({entry['media_type']})")
+                if manifest_path is not None:
+                    print("[MANIFEST] deliverables/manifest.json")
+            return 0
+
+        if args.command == "finalize":
+            export_args: list[str] = []
+            if args.with_notes:
+                export_args.append("--with-notes")
+            elif args.no_notes:
+                export_args.append("--no-notes")
+            if args.native_charts_and_tables:
+                export_args.append("--native-charts-and-tables")
+            if args.pptx_structure:
+                export_args.extend(["--pptx-structure", args.pptx_structure])
+            if args.recorded_narration:
+                export_args.extend(["--recorded-narration", args.recorded_narration])
+            export_args.extend(export_passthrough)
+            result = finalize_project(
+                args.project_path,
+                quick_generate=args.quick_generate,
+                export_args=export_args,
+                extra_deliverables=args.deliverable,
+                force=args.force,
+            )
+            if args.json:
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+            elif result.get("status") == "completed":
+                quality = result.get("quality")
+                export = result.get("export")
+                print(f"[OK] Quality gate: {quality['status']}")
+                print(f"[OK] PPTX export: {export['status']} ({export['path']})")
+                print("[OK] Delivery manifest: deliverables/manifest.json")
+                print("[RESULT] validation/finalize_result.json")
+            else:
+                print(
+                    f"[ERROR] Finalize failed in phase {result.get('phase')}: "
+                    f"{result.get('error')}",
+                    file=sys.stderr,
+                )
+                print("[STATE] validation/finalize_state.json", file=sys.stderr)
+                print("[LOG] validation/finalize_last.log", file=sys.stderr)
+            return 0 if result.get("status") == "completed" else 1
+
         if args.command == "page-context":
             result = build_page_context(args.project_path, args.page)
             output, measured_reads = render_page_context(
@@ -1366,5 +1520,19 @@ def main(argv: list[str] | None = None) -> int:
 
         parser.error(f"Unknown command: {args.command}")
     except Exception as exc:
-        print(f"[ERROR] {exc}")
+        if getattr(args, "json", False):
+            print(
+                json.dumps(
+                    {
+                        "schema": "ppt-master.command-result.v1",
+                        "status": "failed",
+                        "command": getattr(args, "command", None),
+                        "error": str(exc),
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+        else:
+            print(f"[ERROR] {exc}", file=sys.stderr)
         return 1

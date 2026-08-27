@@ -592,19 +592,23 @@ export:
 ```bash
 python3 scripts/svg_quality_checker.py <project_path> \
   --quick-generate --stage final --json
-python3 scripts/svg_to_pptx.py <project_path> --quick-generate
+python3 scripts/project_manager.py finalize <project_path> --quick-generate
 ```
 
-This direct-export flag takes `svg_output/` as its authored page source, resolves
+Finalize reuses the matching report from the preceding checker, then takes
+`svg_output/` as its authored page source, resolves
 valid project-local resources referenced by those pages, infers one consistent
 canvas, uses flat converter-default package scaffolding, and does not read or
 require `spec_lock.md`. Notes, motion, narration, native objects, conversion
 trace, and other ordinary exporter capabilities remain available; notes,
 custom object animation, and narration start off in Quick and may be enabled
-when needed. The exporter refuses a missing, blocking, non-final, or stale
+when needed. Put advanced exporter arguments after `--`. Finalize refuses a
+missing, blocking, non-final, or stale
 Quick final report before PPTX creation. Default-path output retains the normal
 postflight report and `backup/` snapshot; explicit `-o` retains the ordinary
-no-backup behavior. Existing source, analysis, image/icon, and resource-manifest
+no-backup behavior. It also writes a resumable state/result pair and registers
+the ready PPTX in `deliverables/manifest.json`. Existing source, analysis,
+image/icon, and resource-manifest
 artifacts remain untouched; formula source stays inside its authored SVG marker.
 
 For generated-project narration, follow the
@@ -617,6 +621,9 @@ Behavior:
   - `validation/<project_name>_<timestamp>.report.json` — package postflight, quality-gate linkage, unresolved resource audit, and published part counts
   - `backup/<timestamp>/svg_output/` — copy of authored SVG source for re-export without re-running the LLM
 - `exports/` contains only final PPTX deliverables; machine-readable quality and postflight reports belong in `validation/`.
+- `deliverables/manifest.json` is the host-facing publication contract. It
+  records project-relative ready files with MIME, size, SHA-256, role, and
+  required status; it may also register explicit Markdown, PDF, and TXT output.
 - The default Generate flow always runs `finalize_svg.py` before export. This directory is the self-contained SVG visual preview; it is not packaged as a second PPTX. Quick-generate deliberately skips it.
 - In both Generate profiles, explicit `-o/--output` changes the native PPTX destination and skips `backup/`; the postflight report still uses the output stem under the project `validation/` directory.
 - Postflight reruns ZIP integrity and published Slide count. Internal relationships,

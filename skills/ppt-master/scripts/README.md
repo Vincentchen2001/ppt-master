@@ -32,7 +32,7 @@ python3 scripts/project_manager.py import-sources <project_path> <source_files_o
 python3 scripts/total_md_split.py <project_path>
 python3 scripts/finalize_svg.py <project_path>
 python3 scripts/animation_config.py scaffold <project_path>  # optional object-level animation overrides
-python3 scripts/svg_to_pptx.py <project_path>
+python3 scripts/project_manager.py finalize <project_path>
 ```
 
 After `init`, project-scoped Python CLIs automatically record their command
@@ -81,9 +81,12 @@ Project setup:
 ```bash
 python3 scripts/project_manager.py init <project_name> --format ppt169
 python3 scripts/project_manager.py import-sources <project_path> <source_files_or_dirs...>
+python3 scripts/project_manager.py import-sources <project_path> <source_files_or_dirs...> --json
 python3 scripts/project_manager.py scaffold-spec <project_path>  # optional manual helper
 python3 scripts/project_manager.py scaffold-lock <project_path>  # optional manual helper
 python3 scripts/project_manager.py validate <project_path>
+python3 scripts/project_manager.py finalize <project_path> [--deliverable <project-relative-file>]
+python3 scripts/project_manager.py register-deliverable <project_path> <file...>
 python3 scripts/project_manager.py page-context <project_path> P07 --record-usage
 python3 scripts/project_manager.py page-context-report <project_path>
 ```

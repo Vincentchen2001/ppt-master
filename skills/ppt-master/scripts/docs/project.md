@@ -13,10 +13,13 @@ Main entry point for project setup and validation.
 ```bash
 python3 scripts/project_manager.py init <project_name> --format ppt169
 python3 scripts/project_manager.py import-sources <project_path> <source1_or_dir> [<source2_or_dir> ...]
+python3 scripts/project_manager.py import-sources <project_path> <source...> --json
 python3 scripts/project_manager.py scaffold-spec <project_path>  # optional manual helper
 python3 scripts/project_manager.py scaffold-lock <project_path>  # optional manual helper
 python3 scripts/project_manager.py validate <project_path>
 python3 scripts/project_manager.py info <project_path>
+python3 scripts/project_manager.py finalize <project_path> [--deliverable <project-relative-file>]
+python3 scripts/project_manager.py register-deliverable <project_path> <file...>
 python3 scripts/project_manager.py page-context <project_path> P07 [--pretty] [--record-usage]
 python3 scripts/project_manager.py page-context-report <project_path>
 ```
@@ -48,6 +51,8 @@ Notes:
   A same-name source with different bytes receives the next collision-safe
   suffix. Required conversion or PPTX-intake failures leave retained evidence,
   print under `Errors`, and make `import-sources` exit non-zero.
+- `import-sources --json` suppresses child chatter on stdout and emits one
+  `ppt-master.import-sources-result.v1` object with the same exit semantics.
 - Normal Generate authoring reads `templates/design_spec_reference.md`, writes
   the complete `design_spec.md` from scratch, then reads
   `templates/spec_lock_reference.md` and writes the complete lock projection.
@@ -83,6 +88,30 @@ Notes:
   multi-deck index `source_profile.json` (`decks[]`).
   Multi-deck per project: several PPTX imports each get their own `<stem>.*`
   artifacts and a `decks[]` entry; re-importing the same stem replaces its entry.
+
+### Finalize and delivery manifest
+
+`finalize` is the release entry for Generate and Quick Generate projects. It
+uses or refreshes `validation/svg_quality_report.json`, runs native export and
+postflight, then writes:
+
+- `validation/finalize_state.json`: resumable phase checkpoint
+- `validation/finalize_result.json`: compact machine-readable result
+- `validation/finalize_last.log`: complete retained checker/export output
+- `deliverables/manifest.json`: project-relative, hashed publishable files
+
+Rerunning after a failure reuses a current passing quality report and a
+successful source-matched postflight output. Rerunning a completed unchanged
+project is idempotent; pass `--force` for an intentional new export. Common
+export options are first-class flags. Put other `svg_to_pptx.py` arguments after
+`--`.
+
+`--deliverable summary.md` registers an additional project file during
+finalization. `register-deliverable` can register Markdown, PDF, TXT, or any
+other explicit regular project file later. Paths outside the project and
+symlinks fail closed. The manifest stores relative paths, MIME, size, SHA-256,
+role, required status, and readiness; the host remains responsible for signed
+download URLs and public presentation.
 
 ### On-demand page execution view
 
