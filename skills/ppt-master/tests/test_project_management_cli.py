@@ -222,6 +222,16 @@ class DeliverableManifestTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "must not be a symlink"):
                 register_deliverable(project, document)
 
+    def test_rejects_project_internal_files_as_deliverables(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project = Path(temp_dir).resolve() / "project"
+            source = project / "sources" / "uploaded.txt"
+            source.parent.mkdir(parents=True)
+            source.write_text("untrusted input", encoding="utf-8")
+
+            with self.assertRaisesRegex(RuntimeError, "reserved for project internals"):
+                register_deliverable(project, source)
+
 
 class FinalizeProjectTests(unittest.TestCase):
     def _project(self, root: Path) -> Path:

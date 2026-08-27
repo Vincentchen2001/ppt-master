@@ -109,9 +109,11 @@ export options are first-class flags. Put other `svg_to_pptx.py` arguments after
 `--deliverable summary.md` registers an additional project file during
 finalization. `register-deliverable` can register Markdown, PDF, TXT, or any
 other explicit regular project file later. Paths outside the project and
-symlinks fail closed. The manifest stores relative paths, MIME, size, SHA-256,
-role, required status, and readiness; the host remains responsible for signed
-download URLs and public presentation.
+symlinks fail closed. Source, hidden, preview, dependency, and delivery-storage
+paths are project internals and cannot be registered as outputs. The manifest
+stores relative paths, MIME, size, SHA-256, role, required status, and
+readiness; the host remains responsible for signed download URLs and public
+presentation.
 
 ### On-demand page execution view
 

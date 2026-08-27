@@ -24,6 +24,14 @@ _MEDIA_TYPES = {
     ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     ".txt": "text/plain",
 }
+_NON_DELIVERABLE_PARTS = {
+    ".git",
+    ".opencode",
+    ".preview",
+    "deliverables",
+    "node_modules",
+    "sources",
+}
 
 
 def utc_now() -> str:
@@ -117,8 +125,11 @@ def _resolve_project_file(project: Path, file_path: str | Path) -> tuple[Path, s
         raise RuntimeError(f"Deliverable must stay inside the project: {resolved}") from exc
     if not resolved.is_file():
         raise FileNotFoundError(f"Deliverable file not found: {resolved}")
-    if relative == MANIFEST_RELATIVE_PATH:
-        raise RuntimeError("The deliverable manifest cannot register itself")
+    if any(
+        part in _NON_DELIVERABLE_PARTS or part.startswith(".")
+        for part in relative.parts
+    ):
+        raise RuntimeError(f"Path is reserved for project internals: {relative}")
     return resolved, relative.as_posix()
 
 
