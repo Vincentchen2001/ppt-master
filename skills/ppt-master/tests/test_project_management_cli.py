@@ -32,6 +32,18 @@ from project_management.finalize import (  # noqa: E402
 import visual_review  # noqa: E402
 
 
+class ViviCommunicationContractTests(unittest.TestCase):
+    def test_role_switch_audit_stays_internal(self) -> None:
+        skill = (Path(__file__).resolve().parents[1] / "SKILL.md").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertNotIn("## [Role Switch:", skill)
+        self.assertIn("Role transitions", skill)
+        self.assertIn("IDE-oriented Role Switch audit block", skill)
+        self.assertIn("Do not narrate individual tool calls", skill)
+
+
 class ProjectManagerImportTests(unittest.TestCase):
     def _project(self, root: Path) -> Path:
         project = root / "projects" / "demo"

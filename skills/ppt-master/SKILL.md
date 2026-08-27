@@ -9,7 +9,7 @@ description: >
   courseware — including adding narration or animation to one — requests a
   presentation-authored narrated/self-running video, or mentions ppt-master.
 metadata:
-  version: "5.0.0-vivi.2"
+  version: "5.0.0-vivi.3"
   copyright: "Copyright (c) 2025-2026 Hugo He"
   license: "MIT"
   official_repository: "https://github.com/hugohe3/ppt-master"
@@ -78,13 +78,13 @@ never compete with it.
 - Match the user's language and source language unless the user explicitly overrides it.
 - Localize user-facing option labels and explanations. Keep exact enum IDs or field names when needed for precision.
 - Keep `design_spec.md` section headings and field names in the template's original English; content values may use the user's language.
-- Before switching roles, read the corresponding role reference and output:
-
-```markdown
-## [Role Switch: <Role Name>]
-📖 Reading role definition: references/<filename>.md
-📋 Current task: <brief description>
-```
+- Role transitions, reference reads, commands, project paths, internal artifact
+  names, retries, and diagnostics are internal execution records. Never emit the
+  IDE-oriented Role Switch audit block or those implementation details in a
+  user-facing response.
+- Public progress reports only meaningful user-visible stage changes in plain
+  language, such as planning complete, pages complete, quality review complete,
+  or export complete. Do not narrate individual tool calls.
 
 ---
 
