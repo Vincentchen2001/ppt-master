@@ -41,10 +41,9 @@ from .page_context import (
     render_page_context,
 )
 from .paths import (
-    PROJECTS_ROOT,
-    REPO_ROOT,
     SCRIPTS_DIR,
     SOURCE_TO_MD_DIR,
+    resolve_projects_root,
 )
 from .project_specs import scaffold_project_artifact, validate_project_artifacts
 
@@ -218,13 +217,18 @@ def _has_usable_import(summary: dict[str, list[str]]) -> bool:
     )
 
 
+def _import_completed(summary: dict[str, list[str]]) -> bool:
+    """Return whether import-sources completed without a required-step failure."""
+    return _has_usable_import(summary) and not summary.get("errors")
+
+
 class ProjectManager:
     """Create, inspect, validate, and populate project folders."""
 
     CANVAS_FORMATS = CANVAS_FORMATS
 
     def __init__(self, base_dir: str | Path | None = None) -> None:
-        self.base_dir = Path(base_dir) if base_dir is not None else Path.cwd() / "projects"
+        self.base_dir = resolve_projects_root(base_dir)
 
     def scaffold_artifact(self, project_path: str, artifact: str) -> str:
         """Delegate deterministic Markdown scaffold rendering."""
@@ -238,7 +242,7 @@ class ProjectManager:
         *,
         quick_generate: bool = False,
     ) -> str:
-        base_path = Path(base_dir) if base_dir else self.base_dir
+        base_path = resolve_projects_root(base_dir) if base_dir else self.base_dir
 
         if (
             not project_name
@@ -267,7 +271,7 @@ class ProjectManager:
             project_dir_name = project_name
         else:
             project_dir_name = f"{project_name}_{normalized_format}_{date_str}"
-        project_path = base_path / project_dir_name
+        project_path = (base_path / project_dir_name).resolve()
 
         if not is_within_path(project_path, base_path):
             raise ValueError(
@@ -349,11 +353,16 @@ class ProjectManager:
             counter += 1
 
     def _copy_or_move_file(self, source: Path, destination: Path, move: bool) -> Path:
-        try:
-            if source.resolve() == destination.resolve():
-                return destination
-        except FileNotFoundError:
-            pass
+        source = source.expanduser().resolve()
+        destination = destination.expanduser().resolve()
+        if source == destination:
+            return destination
+        if (
+            destination.is_file()
+            and source.is_file()
+            and filecmp.cmp(source, destination, shallow=False)
+        ):
+            return destination
 
         destination = self._ensure_unique_path(destination)
         if move:
@@ -376,14 +385,14 @@ class ProjectManager:
             shutil.copytree(source, destination)
         return destination
 
-    def _run_tool(self, args: list[str]) -> None:
+    def _run_tool(self, args: list[str], *, cwd: Path) -> None:
         child_env = os.environ.copy()
         child_env["PYTHONUTF8"] = "1"
         child_env["PYTHONIOENCODING"] = "utf-8:replace"
         try:
             result = subprocess.run(
                 args,
-                cwd=REPO_ROOT,
+                cwd=cwd.expanduser().resolve(),
                 check=True,
                 capture_output=True,
                 text=True,
@@ -406,7 +415,7 @@ class ProjectManager:
             markdown_path,
             forced_type="pdf",
         )
-        self._run_tool(route.command)
+        self._run_tool(route.command, cwd=markdown_path.parent.parent)
 
     def _import_doc(self, doc_path: Path, markdown_path: Path) -> None:
         route = build_conversion_command(
@@ -414,7 +423,7 @@ class ProjectManager:
             markdown_path,
             forced_type="doc",
         )
-        self._run_tool(route.command)
+        self._run_tool(route.command, cwd=markdown_path.parent.parent)
 
     def _import_presentation(self, presentation_path: Path, markdown_path: Path) -> None:
         route = build_conversion_command(
@@ -422,7 +431,7 @@ class ProjectManager:
             markdown_path,
             forced_type="pptx",
         )
-        self._run_tool(route.command)
+        self._run_tool(route.command, cwd=markdown_path.parent.parent)
 
     def _import_pptx_intake(self, presentation_path: Path, project_dir: Path) -> Path:
         # Multi-deck intake: each PPTX writes its own `<stem>.identity.json` /
@@ -436,7 +445,8 @@ class ProjectManager:
                 str(presentation_path),
                 "-o",
                 str(analysis_dir),
-            ]
+            ],
+            cwd=project_dir,
         )
         return analysis_dir
 
@@ -446,7 +456,7 @@ class ProjectManager:
             markdown_path,
             forced_type="excel",
         )
-        self._run_tool(route.command)
+        self._run_tool(route.command, cwd=markdown_path.parent.parent)
 
     def _import_url(
         self,
@@ -458,7 +468,7 @@ class ProjectManager:
             markdown_path,
             forced_type="web",
         )
-        self._run_tool(route.command)
+        self._run_tool(route.command, cwd=markdown_path.parent.parent)
 
     def _is_valid_imported_url_markdown(self, markdown_path: Path) -> bool:
         """Return whether web_to_md produced a usable Markdown source."""
@@ -750,7 +760,7 @@ class ProjectManager:
     ) -> dict[str, list[str]]:
         if move and copy:
             raise ValueError("--move and --copy are mutually exclusive")
-        project_dir = Path(project_path)
+        project_dir = Path(project_path).expanduser().resolve()
         if not project_dir.exists() or not project_dir.is_dir():
             raise FileNotFoundError(f"Project directory not found: {project_dir}")
         if not source_items:
@@ -766,7 +776,14 @@ class ProjectManager:
             "analysis": [],
             "notes": [],
             "skipped": [],
+            "errors": [],
         }
+
+        managed_projects_root = (
+            self.base_dir
+            if is_within_path(project_dir, self.base_dir)
+            else project_dir.parent
+        )
 
         expanded_items: list[str] = []
         supplied_dirs: list[Path] = []
@@ -774,7 +791,7 @@ class ProjectManager:
             if is_url(item):
                 expanded_items.append(item)
                 continue
-            item_path = Path(item)
+            item_path = Path(item).expanduser()
             if item_path.is_dir():
                 supplied_dirs.append(item_path)
                 directory_files = sorted(
@@ -809,29 +826,35 @@ class ProjectManager:
                 except Exception as exc:  # pragma: no cover - summary path
                     archived = self._archive_url_record(sources_dir, item)
                     summary["url_records"].append(str(archived))
-                    summary["skipped"].append(f"{item}: {exc}")
+                    summary["errors"].append(f"{item}: URL conversion failed ({exc})")
                     continue
 
                 if not self._is_valid_imported_url_markdown(markdown_path):
                     markdown_path.unlink(missing_ok=True)
                     archived = self._archive_url_record(sources_dir, item)
                     summary["url_records"].append(str(archived))
-                    summary["skipped"].append(f"{item}: URL conversion produced no usable Markdown")
+                    summary["errors"].append(
+                        f"{item}: URL conversion produced no usable Markdown"
+                    )
                     continue
 
                 summary["markdown"].append(str(markdown_path))
                 self._propagate_companion_image_assets(markdown_path, project_dir)
                 continue
 
-            source_path = Path(item)
+            source_path = Path(item).expanduser()
             if not source_path.exists():
-                summary["skipped"].append(f"{item}: path not found")
+                missing_path = source_path.resolve()
+                summary["errors"].append(f"{missing_path}: path not found")
                 continue
             if source_path.is_dir():
-                summary["skipped"].append(f"{item}: directories are not supported")
+                summary["errors"].append(
+                    f"{source_path.resolve()}: directories are not supported"
+                )
                 continue
+            source_path = source_path.resolve()
 
-            inside_projects = is_within_path(source_path, PROJECTS_ROOT)
+            inside_projects = is_within_path(source_path, managed_projects_root)
             if copy:
                 effective_move = False
             elif inside_projects:
@@ -840,7 +863,7 @@ class ProjectManager:
                 effective_move = False
             if move and not inside_projects:
                 print(
-                    f"note: {source_path} is outside {PROJECTS_ROOT}; copied "
+                    f"note: {source_path} is outside {managed_projects_root}; copied "
                     f"(not moved). Only sources under projects/ may be moved.",
                     file=sys.stderr,
                 )
@@ -886,8 +909,11 @@ class ProjectManager:
             if suffix in BITMAP_IMAGE_SUFFIXES:
                 images_dir = project_dir / "images"
                 images_dir.mkdir(parents=True, exist_ok=True)
-                image_path = self._ensure_unique_path(images_dir / archived_path.name)
-                shutil.copy2(archived_path, image_path)
+                image_path = self._copy_or_move_file(
+                    archived_path,
+                    images_dir / archived_path.name,
+                    move=False,
+                )
                 summary["images"].append(str(image_path))
                 if image_path.name != archived_path.name:
                     summary["notes"].append(
@@ -914,7 +940,9 @@ class ProjectManager:
                     summary["markdown"].append(str(markdown_path))
                     self._propagate_companion_image_assets(markdown_path, project_dir)
                 except Exception as exc:  # pragma: no cover - summary path
-                    summary["skipped"].append(f"{item}: PDF conversion failed ({exc})")
+                    summary["errors"].append(
+                        f"{source_path}: PDF conversion failed ({exc})"
+                    )
             elif suffix in PRESENTATION_SUFFIXES:
                 canonical_markdown_path = sources_dir / f"{archived_path.stem}.md"
                 try:
@@ -923,7 +951,9 @@ class ProjectManager:
                     if intake_str not in summary["analysis"]:
                         summary["analysis"].append(intake_str)
                 except Exception as exc:  # pragma: no cover - summary path
-                    summary["notes"].append(f"{item}: PPTX intake analysis failed ({exc})")
+                    summary["errors"].append(
+                        f"{source_path}: PPTX intake analysis failed ({exc})"
+                    )
                 if archived_path.stem in explicit_markdown_stems:
                     summary["notes"].append(
                         f"{item}: skipped presentation auto-conversion because a same-stem Markdown source was provided"
@@ -942,7 +972,9 @@ class ProjectManager:
                     summary["markdown"].append(str(markdown_path))
                     self._propagate_companion_image_assets(markdown_path, project_dir)
                 except Exception as exc:  # pragma: no cover - summary path
-                    summary["skipped"].append(f"{item}: presentation conversion failed ({exc})")
+                    summary["errors"].append(
+                        f"{source_path}: presentation conversion failed ({exc})"
+                    )
             elif suffix in EXCEL_SUFFIXES:
                 canonical_markdown_path = sources_dir / f"{archived_path.stem}.md"
                 if archived_path.stem in explicit_markdown_stems:
@@ -963,7 +995,9 @@ class ProjectManager:
                     summary["markdown"].append(str(markdown_path))
                     self._propagate_companion_image_assets(markdown_path, project_dir)
                 except Exception as exc:  # pragma: no cover - summary path
-                    summary["skipped"].append(f"{item}: Excel conversion failed ({exc})")
+                    summary["errors"].append(
+                        f"{source_path}: Excel conversion failed ({exc})"
+                    )
             elif suffix in LEGACY_EXCEL_SUFFIXES:
                 summary["notes"].append(
                     f"{item}: archived only; legacy .xls is not converted automatically. "
@@ -993,7 +1027,9 @@ class ProjectManager:
                     summary["markdown"].append(str(markdown_path))
                     self._propagate_companion_image_assets(markdown_path, project_dir)
                 except Exception as exc:  # pragma: no cover - summary path
-                    summary["skipped"].append(f"{item}: document conversion failed ({exc})")
+                    summary["errors"].append(
+                        f"{source_path}: document conversion failed ({exc})"
+                    )
             elif suffix == ".txt":
                 markdown_path = self._normalize_text_source(archived_path, sources_dir)
                 summary["markdown"].append(str(markdown_path))
@@ -1004,7 +1040,7 @@ class ProjectManager:
         # its files move into the target project. Every other location is copied
         # and remains untouched, even when the caller passes --move.
         for directory in supplied_dirs:
-            if copy or not is_within_path(directory, PROJECTS_ROOT):
+            if copy or not is_within_path(directory, managed_projects_root):
                 continue
             if directory.is_dir() and not any(directory.iterdir()):
                 try:
@@ -1198,9 +1234,14 @@ def main(argv: list[str] | None = None) -> int:
                 move=args.move,
                 copy=args.copy,
             )
-            import_complete = _has_usable_import(summary)
+            import_complete = _import_completed(summary)
             if import_complete:
                 print(f"[OK] Imported sources into: {args.project_path}")
+            elif _has_usable_import(summary):
+                print(
+                    f"[ERROR] Source import incomplete for: {args.project_path}",
+                    file=sys.stderr,
+                )
             else:
                 print(
                     f"[ERROR] No usable sources imported into: {args.project_path}",
@@ -1238,6 +1279,10 @@ def main(argv: list[str] | None = None) -> int:
                 print("\nSkipped:")
                 for item in summary["skipped"]:
                     print(f"  - {item}")
+            if summary["errors"]:
+                print("\nErrors:", file=sys.stderr)
+                for item in summary["errors"]:
+                    print(f"  - {item}", file=sys.stderr)
             return 0 if import_complete else 1
 
         if args.command == "scaffold-spec":

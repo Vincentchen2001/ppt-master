@@ -1,8 +1,8 @@
 # Project Tools
 
-> **Import boundary**: move only sources already under the repository's
-> `projects/` tree. Copy every other local path, even when `--move` is supplied.
-> Use `--copy` to preserve a projects-local source.
+> **Import boundary**: move only sources already under the active host projects
+> root. Copy every other local path, even when `--move` is supplied. Use
+> `--copy` to preserve a projects-local source.
 
 Project tools create, validate, and inspect the standard PPT Master workspace.
 
@@ -22,6 +22,12 @@ python3 scripts/project_manager.py page-context-report <project_path>
 ```
 
 Notes:
+- Set `PPT_MASTER_PROJECTS_ROOT` when the host owns project placement. It is the
+  default base for `init` and the ownership boundary used by source imports.
+  Without it, the default remains `<current-working-directory>/projects`.
+- Project paths and local source paths are canonicalized before any converter
+  starts. Converter subprocesses run from the active project directory and
+  receive absolute paths.
 - `init --quick-generate`: `svg_output/` plus
   `validation/workflow.log`; no README
 - Files outside `projects/` are always copied into `sources/`
@@ -38,6 +44,10 @@ Notes:
 - Files already under `projects/` move into `sources/` by default. Pass `--copy`
   to preserve them in place.
 - `--move` and `--copy` are mutually exclusive.
+- Re-importing the same filename with identical bytes reuses the archived file.
+  A same-name source with different bytes receives the next collision-safe
+  suffix. Required conversion or PPTX-intake failures leave retained evidence,
+  print under `Errors`, and make `import-sources` exit non-zero.
 - Normal Generate authoring reads `templates/design_spec_reference.md`, writes
   the complete `design_spec.md` from scratch, then reads
   `templates/spec_lock_reference.md` and writes the complete lock projection.

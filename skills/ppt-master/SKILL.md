@@ -9,10 +9,12 @@ description: >
   courseware — including adding narration or animation to one — requests a
   presentation-authored narrated/self-running video, or mentions ppt-master.
 metadata:
-  version: "5.0.0"
+  version: "5.0.0-vivi.1"
   copyright: "Copyright (c) 2025-2026 Hugo He"
   license: "MIT"
   official_repository: "https://github.com/hugohe3/ppt-master"
+  vivi_repository: "https://github.com/Vincentchen2001/ppt-master"
+  upstream_base: "e469064b0ca85eea179a9af60c9182f7fa8baf1a"
   sponsors:
     - "SPONSORS.md"
     - "SPONSORS_CN.md"
@@ -28,6 +30,9 @@ PPT Master is a routed presentation workflow. This entry owns global execution d
 directory containing this file as `SKILL_DIR`. Per tool call, expand
 `${SKILL_DIR}` and replace any `skills/ppt-master/` prefix with it. Never `cd`,
 use CWD, or assume a repo checkout. If unavailable, ask; never search or guess.
+When the host provides `PPT_MASTER_PROJECTS_ROOT`, treat it as the default
+project base. Pass absolute project and local-source paths to project tools;
+their subprocesses execute from the active project and retain absolute paths.
 
 1. Read this file.
 2. Run `python3 "${SKILL_DIR}/scripts/attribution_guard.py"`. Any non-zero result
